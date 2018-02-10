@@ -15,19 +15,25 @@ This application requires two libraries, pyaudio and python-evdev. They are
 declared in the setup.cfg file, so will be installed if you ``pip install``,
 but you can also install them using your system package manager, looking for
 packages similar in name to:
+
 >      python-pyaudio python-evdev
+
 
 Notes
 -----
 
 Ignore any input like the following, it is a consequence of using the Port Audio library:
->        ALSA lib pcm.c:2267:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.rear
->        ALSA lib pcm.c:2267:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.center_lfe
->        ALSA lib pcm.c:2267:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.side
->        ALSA lib pcm_route.c:867:(find_matching_chmap) Found no matching channel map
->        Cannot connect to server socket err = No such file or directory
->        Cannot connect to server request channel
->        jack server is not running or cannot be started
+
+```
+        ALSA lib pcm.c:2267:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.rear
+        ALSA lib pcm.c:2267:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.center_lfe
+        ALSA lib pcm.c:2267:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.side
+        ALSA lib pcm_route.c:867:(find_matching_chmap) Found no matching channel map
+        Cannot connect to server socket err = No such file or directory
+        Cannot connect to server request channel
+        jack server is not running or cannot be started
+```
+
 
 Usage
 -----
@@ -35,23 +41,30 @@ Usage
 You may have to give your user access to the /dev/uinput device. This is beyond the scope of this document, but there are options using udev rules, or just chmod.
 
 You can use the built in microphone port, or the USB one provided with some (cheap?) adapters. To see a list of candidate input devices type:
+
 >        python -m ppmadapter inputs
 
+
 You will get a list like this:
->    HDA Intel PCH: ALC892 Analog (hw:0,0): 	 Max Channels: in[2] out[0]
->    HDA Intel PCH: ALC892 Digital (hw:0,1): 	 Max Channels: in[0] out[2]
->    HDA Intel PCH: ALC892 Alt Analog (hw:0,2): 	 Max Channels: in[2] out[0]
->    HDA NVidia: HDMI 0 (hw:1,3): 	 Max Channels: in[0] out[2]
->    HDA NVidia: HDMI 1 (hw:1,7): 	 Max Channels: in[0] out[2]
->    HDA NVidia: HDMI 2 (hw:1,8): 	 Max Channels: in[0] out[8]
->    HDA NVidia: HDMI 3 (hw:1,9): 	 Max Channels: in[0] out[2]
->    sysdefault: 	 Max Channels: in[128] out[128]
->    iec958: 	 Max Channels: in[0] out[2]
->    spdif: 	 Max Channels: in[0] out[2]
->    default: 	 Max Channels: in[128] out[128]
->    dmix: 	 Max Channels: in[0] out[2]
+
+``
+    HDA Intel PCH: ALC892 Analog (hw:0,0): 	 Max Channels: in[2] out[0]
+    HDA Intel PCH: ALC892 Digital (hw:0,1): 	 Max Channels: in[0] out[2]
+    HDA Intel PCH: ALC892 Alt Analog (hw:0,2): 	 Max Channels: in[2] out[0]
+    HDA NVidia: HDMI 0 (hw:1,3): 	 Max Channels: in[0] out[2]
+    HDA NVidia: HDMI 1 (hw:1,7): 	 Max Channels: in[0] out[2]
+    HDA NVidia: HDMI 2 (hw:1,8): 	 Max Channels: in[0] out[8]
+    HDA NVidia: HDMI 3 (hw:1,9): 	 Max Channels: in[0] out[2]
+    sysdefault: 	 Max Channels: in[128] out[128]
+    iec958: 	 Max Channels: in[0] out[2]
+    spdif: 	 Max Channels: in[0] out[2]
+    default: 	 Max Channels: in[128] out[128]
+    dmix: 	 Max Channels: in[0] out[2]
+``
+
 
 Then, to start the application with a specific card:
+
 >        python -m ppmadapter -i hw:0 run
 >        python -m ppmadapter -i hw:1,7 run
 
