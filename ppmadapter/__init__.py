@@ -67,7 +67,7 @@ class PPMDecoder(object):
                          2: ecodes.ABS_Z,
                          3: ecodes.ABS_THROTTLE}
 
-        events = [(v, (0, 255, 5, 0)) for v in self._mapping.values()]
+        events = [(v, (0, 5, 255, 0)) for v in self._mapping.values()]
 
         self._ev = UInput(name='ppmadapter',
                           events={
@@ -159,8 +159,7 @@ def print_inputs():
         a = pyaudio.PyAudio()
         for i in range(a.get_device_count()):
             d = a.get_device_info_by_index(i)
-            print d['name']
-
+            print( "%s: \t Max Channels: in[%s] out[%s]" % (d['name'], d['maxInputChannels'], d['maxOutputChannels']) )
 
 def main():
     parser = argparse.ArgumentParser()
