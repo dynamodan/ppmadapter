@@ -15,7 +15,6 @@ This application requires two libraries, pyaudio and python-evdev. They are
 declared in the setup.cfg file, so will be installed if you ``pip install``,
 but you can also install them using your system package manager, looking for
 packages similar in name to:
-
 >      python-pyaudio python-evdev
 
 
@@ -23,7 +22,6 @@ Notes
 -----
 
 Ignore any input like the following, it is a consequence of using the Port Audio library:
-
 ```
         ALSA lib pcm.c:2267:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.rear
         ALSA lib pcm.c:2267:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.center_lfe
@@ -41,13 +39,11 @@ Usage
 You may have to give your user access to the /dev/uinput device. This is beyond the scope of this document, but there are options using udev rules, or just chmod.
 
 You can use the built in microphone port, or the USB one provided with some (cheap?) adapters. To see a list of candidate input devices type:
-
 >        python -m ppmadapter inputs
 
 
 You will get a list like this:
-
-``
+```
     HDA Intel PCH: ALC892 Analog (hw:0,0): 	 Max Channels: in[2] out[0]
     HDA Intel PCH: ALC892 Digital (hw:0,1): 	 Max Channels: in[0] out[2]
     HDA Intel PCH: ALC892 Alt Analog (hw:0,2): 	 Max Channels: in[2] out[0]
@@ -60,11 +56,10 @@ You will get a list like this:
     spdif: 	 Max Channels: in[0] out[2]
     default: 	 Max Channels: in[128] out[128]
     dmix: 	 Max Channels: in[0] out[2]
-``
+```
 
 
 Then, to start the application with a specific card:
-
 >        python -m ppmadapter -i hw:0 run
 >        python -m ppmadapter -i hw:1,7 run
 
