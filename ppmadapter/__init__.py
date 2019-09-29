@@ -1,6 +1,13 @@
 # PPMAdapter - An RC PPM decoder and joystick emulator
 # Copyright 2016 Nigel Sim <nigel.sim@gmail.com>
 #
+# Also based on some code from PPM to TX
+# Copyright (C) 2010 Tomas 'ZeXx86' Jedrzejek (zexx86@zexos.org)
+# Copyright (C) 2011 Tomas 'ZeXx86' Jedrzejek (zexx86@zexos.org)
+# Copyright (C) 2017 Jürgen Diez (jdiez@web.de)
+# Copyright (C) 2018 Tomas 'ZeXx86' Jedrzejek (tomasj@spirit-system.com)
+#
+#
 # PPMAdapter is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -18,7 +25,6 @@ import array
 import sys
 import pyaudio
 import argparse
-import datetime
 import collections
 
 from evdev import UInput, ecodes
@@ -28,8 +34,6 @@ from contextlib import contextmanager
 try:
     import numpy as np
     import matplotlib.pyplot as plt
-    #from matplotlib.animation import FuncAnimation
-    #from mpl_toolkits.axes_grid1 import make_axes_locatable
 except ImportError:
     print("Warning: without numpy and matplotlib, --plot option will not work")
 
@@ -41,6 +45,7 @@ ERROR_HANDLER_FUNC = CFUNCTYPE(None, c_char_p, c_int, c_char_p, c_int, c_char_p)
 
 def py_error_handler(filename, line, function, err, fmt):
     pass
+
 
 c_error_handler = ERROR_HANDLER_FUNC(py_error_handler)
 
@@ -57,53 +62,58 @@ class PPMDecoder(object):
     """Decodes the audio data into PPM pulse data, and then into uinput
     joystick events.
     """
-    def __init__(self, rate):
+    def __init__(self, rate, average_length):
         """
         Parameters
         ----------
         rate : int
             sample rate
+        average_length : int
+            average of past channel values for smoothing, set to 1 if undesired
         """
-        self._rate = float(rate)
-        self._last_fall = None
-        self._last_rise = None
-        self._threshold = 12000
-        self._last_edge = None
-        self._ch = None
+        self.rate = float(rate)
 
-        # To get of weird jittering, average past values. Note this does
-        # increase latency
-        self._average_length = 15
+        # Values that persist between windows so we can handle small windows
+        # where not all the channels have been seen in a single window
+        self.min_value = float("+inf")
+        self.max_value = float("-inf")
+        self.channel = 0
+        self.previous_value = None
+        self.pulse_start_time = 0
+        self.samples_since_pulse = 0
 
-        # Size in sampling intervals, of the frame space marker
-        # Note: probably should be 2, but sometimes it's not quite
-        self._marker = int(1.75 * 0.0025 * self._rate)
+        # Should be 2ms, but sometimes not quite
+        self.start_pulse_length = 2.0 / 1000
 
         # Mapping of channels to events
-        self._mapping = {0: ecodes.ABS_X,
-                         1: ecodes.ABS_Y,
-                         2: ecodes.ABS_Z,
-                         3: ecodes.ABS_THROTTLE}
+        self.mapping = {
+            0: ecodes.ABS_X,
+            1: ecodes.ABS_Y,
+            2: ecodes.ABS_Z,
+            3: ecodes.ABS_THROTTLE,
+            4: ecodes.ABS_RUDDER,
+            5: ecodes.ABS_MISC,
+        }
 
         # History of values (for averaging)
-        self._history = {i: collections.deque(maxlen=self._average_length) \
-                for i in self._mapping.keys()}
+        self.history = {i: collections.deque(maxlen=average_length)
+                for i in self.mapping.keys()}
 
-        events = [(v, (0, 5, 255, 0)) for v in self._mapping.values()]
+        # Min/max values we'll output
+        events = [(v, (0, -512, 512, 0)) for v in self.mapping.values()]
 
-        self._ev = UInput(name='ppmadapter',
-                          events={
-                               ecodes.EV_ABS: events,
-                               ecodes.EV_KEY: {288: 'BTN_JOYSTICK'}
-                          })
+        self.ev = UInput(name='ppmadapter', events={
+            ecodes.EV_ABS: events,
+            ecodes.EV_KEY: {288: 'BTN_JOYSTICK'}
+        })
 
     def __enter__(self):
         return self
 
     def __exit__(self, type, value, tb):
-        self._ev.close()
+        self.ev.close()
 
-    def feed(self, data, plot=False, measure_high=True):
+    def feed(self, data, plot=False, debug=False, measure_high=True):
         """Feeds the decoder with a block of sample data.
 
         The data should be integer values, and should only be a single channel.
@@ -121,109 +131,99 @@ class PPMDecoder(object):
             PPM yet... just doing what works for me here...
         """
         if plot:
-            rising = np.zeros((len(data),))
-            falling = np.zeros((len(data),))
+            plot_start = np.zeros((len(data),))
+            plot_channels = {i: np.zeros((len(data),)) for i in self.mapping.keys()}
 
-        sync_req = False
+        # Process all audio samples
         for i in range(len(data)):
-            this_edge = data[i] > self._threshold
-            if self._last_edge is None:
-                self._last_edge = this_edge
+            # Hmm... maybe the problem was just that it needed to be negated?
+            # This is what txppm does.
+            current_value = -data[i]
+
+            # Update extrema and threshold as a weighted average. In my case,
+            # average ends up being close to 0, which then results in noise
+            # triggering this. Thus, weight toward max.
+            self.min_value = min(self.min_value, current_value)
+            self.max_value = max(self.max_value, current_value)
+            threshold = 1/4*self.min_value + 3/4*self.max_value
+
+            # Keep track of the previous value for determining if between the
+            # last sample and the current sample there was a rise
+            if self.previous_value is None:
+                self.previous_value = current_value
                 continue
 
-            if this_edge and not self._last_edge:
-                # rising
-                self._last_rise = i
+            # Detect rising edge: if the previous value is low and now it's
+            # high
+            rising = self.previous_value < threshold and current_value > threshold
 
-                if self._last_fall is not None:
-                    if not measure_high:
-                        sync_req |= self.signal(i - self._last_fall)
+            if rising:
+                # Time when hitting threshold (measured in seconds)
+                # See: https://github.com/nexx512/txppm/blob/master/software/ppm.c
+                trigger_offset = (threshold - self.previous_value) / \
+                    (current_value - self.previous_value) / self.rate
+                trigger_time = self.samples_since_pulse / self.rate + trigger_offset
+                pulse_length = trigger_time - self.pulse_start_time
+                self.pulse_start_time = trigger_time
+
+                # Start pulse
+                if pulse_length > self.start_pulse_length:
+                    self.channel = 0
+                    self.pulse_start_time = trigger_offset
+                    self.samples_since_pulse = 0
 
                     if plot:
-                        rising[i] = self._threshold
-            elif not this_edge and self._last_edge:
-                # falling
-                self._last_fall = i
+                        plot_start[i] = threshold
 
-                if self._last_rise is not None:
-                    if measure_high:
-                        sync_req |= self.signal(i - self._last_rise)
+                # Channel measurement
+                else:
+                    # If a channel we care about, save it. Note: still need to
+                    # increment the channel even if not in mapping since we
+                    # might care about non-consecutive channels (e.g. 1, 3, and
+                    # 5).
+                    if self.channel in self.mapping:
+                        # txppm says "According to the spec, the pulse length
+                        # ranges from 1..2ms"
+                        value = pulse_length*1000 - 1.5
 
-                    if plot:
-                        falling[i] = self._threshold
+                        # To enable averaging, add current value to queue but
+                        # don't set it yet
+                        self.history[self.channel].append(value)
 
-            self._last_edge = this_edge
+                        if plot:
+                            plot_channels[self.channel][i] = threshold
 
-        if sync_req:
-            # For averaging, now average compute values here, set them, then sync
-            for channel, values in self._history.items():
-                if len(values) > 0:
-                    avg = int(sum(values)/len(values))
-                    self._ev.write(ecodes.EV_ABS, self._mapping[channel], avg)
-                    #print("ch"+str(channel), "=", avg)
+                    self.channel += 1
 
-            self._ev.syn()
-            #print("sync", datetime.datetime.now())
+            self.samples_since_pulse += 1
+            self.previous_value = current_value
 
-        # Handle wrapping around data window
-        if self._last_fall is not None:
-            self._last_fall = self._last_fall - len(data)
+        # Send joystick updates
+        for ch, values in self.history.items():
+            value = 0
 
-            if self._last_fall < (-self._rate):
-                print("Lost sync")
-                self._ch = None
-                self._last_fall = None
-                self._last_rise = None
+            # Handle averaging
+            if len(values) > 0:
+                value = int(sum(values)/len(values) * 512)
 
-        if self._last_rise is not None:
-            self._last_rise = self._last_rise - len(data)
+            self.ev.write(ecodes.EV_ABS, self.mapping[ch], value)
 
+            if debug:
+                print("ch"+str(ch), "=", value)
+
+        self.ev.syn()
+
+        # Plot the audio data we received if desired
         if plot:
-            y = list(data)
+            # Plot negative since we negate when processing
+            y = -np.array(list(data), dtype=np.float32)
             x = np.arange(0, len(y), 1)
             plt.plot(x, y, label="signal")
-            plt.plot(x, rising, label="rising")
-            plt.plot(x, falling, label="falling")
+            plt.plot(x, plot_start, label="start")
+            for ch, values in plot_channels.items():
+                plt.plot(x, values, label="ch"+str(ch))
             plt.legend()
             plt.show()
-
-    def signal(self, w):
-        """Process the detected signal.
-
-        The signal is the number of sampling intervals between the falling
-        edge and the rising edge.
-
-        Parameters
-        ----------
-        w : int
-            signal width
-
-        Returns
-        -------
-        bool
-            does uinput require sync
-        """
-        if w > self._marker:
-            if self._ch is None:
-                print("Got sync")
-            self._ch = 0
-            #print("reset at", w, "vs. desired length", self._marker)
-            return False
-
-        if self._ch is None or self._ch not in self._mapping:
-            return False
-
-        duration = float(w) / self._rate
-        value = int((duration - 0.0007) * 1000 * 255)
-
-        # To enable averaging, add current value to queue but don't set it yet
-        assert self._ch in self._history, str(self._ch)+" not in _history"
-        self._history[self._ch].append(value)
-        #self._ev.write(ecodes.EV_ABS, self._mapping[self._ch], value)
-
-        self._ch += 1
-
-        return True
 
 
 def print_inputs():
@@ -233,14 +233,19 @@ def print_inputs():
         a = pyaudio.PyAudio()
         for i in range(a.get_device_count()):
             d = a.get_device_info_by_index(i)
-            print( "%s: \t Max Channels: in[%s] out[%s]" % (d['name'], d['maxInputChannels'], d['maxOutputChannels']) )
+            print("%s: \t Max Channels: in[%s] out[%s]" % (d['name'],
+                d['maxInputChannels'], d['maxOutputChannels']))
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', help="input audio device name", default='default')
     parser.add_argument('action', default='run', choices=['run', 'inputs'])
+    parser.add_argument('--average', help="average channel values for smoothing (1 = no averaging)", type=int, default=1)
+    parser.add_argument('--buffer', help="buffer size (smaller = lower latency)", type=int, default=64)
     parser.add_argument('--plot', help="display plot of PPM data", dest='plot', action='store_true')
-    parser.set_defaults(plot=False)
+    parser.add_argument('--debug', help="print debug information", dest='debug', action='store_true')
+    parser.set_defaults(plot=False, debug=False)
     args = parser.parse_args()
 
     if args.action == 'inputs':
@@ -250,8 +255,10 @@ def main():
     in_ix = None
     rate = None
     in_name = None
+
     with noalsaerr():
         a = pyaudio.PyAudio()
+
     for i in range(a.get_device_count()):
         d = a.get_device_info_by_index(i)
         if args.i == d['name']:
@@ -264,10 +271,11 @@ def main():
             rate = int(d['defaultSampleRate'])
             in_name = d['name']
 
-    print("Using input: %s" % in_name)
+    print("Using input: %s, buffer size %d, averaging %d" % (in_name,
+        args.buffer, args.average))
 
     # Smaller = lower latency
-    chunk = 512
+    chunk = args.buffer
 
     stream = a.open(format=pyaudio.paInt16,
                     channels=1,
@@ -277,13 +285,14 @@ def main():
                     input_device_index=in_ix)
 
     try:
-        with PPMDecoder(rate) as ppm:
+        with PPMDecoder(rate, args.average) as ppm:
             while True:
                 sample = stream.read(chunk)
                 sample = array.array('h', sample)
-                ppm.feed(sample, args.plot)
+                ppm.feed(sample, args.plot, args.debug)
     finally:
         stream.close()
+
 
 if __name__ == '__main__':
     sys.exit(main())
