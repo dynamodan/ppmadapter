@@ -14,19 +14,25 @@
 # You should have received a copy of the GNU General Public License
 # along with PPMAdapter.  If not, see <http://www.gnu.org/licenses/>.
 
+import array
+import sys
 import pyaudio
 import argparse
-import sys
+import datetime
+import collections
+
 from evdev import UInput, ecodes
-import array
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
 from contextlib import contextmanager
 
 try:
     import numpy as np
     import matplotlib.pyplot as plt
+    #from matplotlib.animation import FuncAnimation
+    #from mpl_toolkits.axes_grid1 import make_axes_locatable
 except ImportError:
     print("Warning: without numpy and matplotlib, --plot option will not work")
+
 
 # Suppress ALSA errors
 # http://stackoverflow.com/questions/7088672
@@ -61,19 +67,27 @@ class PPMDecoder(object):
         self._rate = float(rate)
         self._last_fall = None
         self._last_rise = None
-        self._threshold = 15000
+        self._threshold = 12000
         self._last_edge = None
         self._ch = None
 
+        # To get of weird jittering, average past values. Note this does
+        # increase latency
+        self._average_length = 15
+
         # Size in sampling intervals, of the frame space marker
-        # Note: 1.9 since probably should be 2, but sometimes it's not quite
-        self._marker = int(1.9 * 0.0025 * self._rate)
+        # Note: probably should be 2, but sometimes it's not quite
+        self._marker = int(1.75 * 0.0025 * self._rate)
 
         # Mapping of channels to events
         self._mapping = {0: ecodes.ABS_X,
                          1: ecodes.ABS_Y,
                          2: ecodes.ABS_Z,
                          3: ecodes.ABS_THROTTLE}
+
+        # History of values (for averaging)
+        self._history = {i: collections.deque(maxlen=self._average_length) \
+                for i in self._mapping.keys()}
 
         events = [(v, (0, 5, 255, 0)) for v in self._mapping.values()]
 
@@ -122,7 +136,7 @@ class PPMDecoder(object):
                 self._last_rise = i
 
                 if self._last_fall is not None:
-                    if not measure_high: 
+                    if not measure_high:
                         sync_req |= self.signal(i - self._last_fall)
 
                     if plot:
@@ -141,7 +155,15 @@ class PPMDecoder(object):
             self._last_edge = this_edge
 
         if sync_req:
+            # For averaging, now average compute values here, set them, then sync
+            for channel, values in self._history.items():
+                if len(values) > 0:
+                    avg = int(sum(values)/len(values))
+                    self._ev.write(ecodes.EV_ABS, self._mapping[channel], avg)
+                    #print("ch"+str(channel), "=", avg)
+
             self._ev.syn()
+            #print("sync", datetime.datetime.now())
 
         # Handle wrapping around data window
         if self._last_fall is not None:
@@ -153,7 +175,7 @@ class PPMDecoder(object):
                 self._last_fall = None
                 self._last_rise = None
 
-        if self._last_rise is not None: 
+        if self._last_rise is not None:
             self._last_rise = self._last_rise - len(data)
 
         if plot:
@@ -185,6 +207,7 @@ class PPMDecoder(object):
             if self._ch is None:
                 print("Got sync")
             self._ch = 0
+            #print("reset at", w, "vs. desired length", self._marker)
             return False
 
         if self._ch is None or self._ch not in self._mapping:
@@ -192,7 +215,11 @@ class PPMDecoder(object):
 
         duration = float(w) / self._rate
         value = int((duration - 0.0007) * 1000 * 255)
-        self._ev.write(ecodes.EV_ABS, self._mapping[self._ch], value)
+
+        # To enable averaging, add current value to queue but don't set it yet
+        assert self._ch in self._history, str(self._ch)+" not in _history"
+        self._history[self._ch].append(value)
+        #self._ev.write(ecodes.EV_ABS, self._mapping[self._ch], value)
 
         self._ch += 1
 
@@ -239,7 +266,8 @@ def main():
 
     print("Using input: %s" % in_name)
 
-    chunk = 2048
+    # Smaller = lower latency
+    chunk = 512
 
     stream = a.open(format=pyaudio.paInt16,
                     channels=1,
