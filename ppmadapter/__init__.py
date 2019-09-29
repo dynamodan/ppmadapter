@@ -113,7 +113,7 @@ class PPMDecoder(object):
     def __exit__(self, type, value, tb):
         self.ev.close()
 
-    def feed(self, data, plot=False, debug=False, measure_high=True):
+    def feed(self, data, plot=False, debug=False):
         """Feeds the decoder with a block of sample data.
 
         The data should be integer values, and should only be a single channel.
@@ -124,11 +124,6 @@ class PPMDecoder(object):
             Sample data
         plot : bool
             Whether to display data in a matplotlib plot or not
-        measure_high : bool
-            Whether to compute the duration of each channel based on the time
-            it's high or low. Code originally was False case but on my controller
-            the high time seems to be what's modulated. I can't find docs on
-            PPM yet... just doing what works for me here...
         """
         if plot:
             plot_start = np.zeros((len(data),))
