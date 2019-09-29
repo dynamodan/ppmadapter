@@ -50,8 +50,8 @@ Testing
 -------
 A few options for checking the joystick inputs are reasonable: ``jstest-gtk``
 or ``crrcsim``. For a simulator, I've tried using ``crrcsim`` (either as audio
-input directly or with the input from PPM Adapter) and
-[neXt](https://aur.archlinux.org/packages/next/).
+input directly or with the input from PPM Adapter),
+[neXt](https://aur.archlinux.org/packages/next/), and FlightGear.
 
 For neXt, you can create a config file *~/neXt/controllerconfigs.txt* something
 like the following and then configure/calibrate the channels within the
