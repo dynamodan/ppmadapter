@@ -22,6 +22,12 @@ import array
 from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
 from contextlib import contextmanager
 
+try:
+    import numpy as np
+    import matplotlib.pyplot as plt
+except ImportError:
+    print("Warning: without numpy and matplotlib, --plot option will not work")
+
 # Suppress ALSA errors
 # http://stackoverflow.com/questions/7088672
 ERROR_HANDLER_FUNC = CFUNCTYPE(None, c_char_p, c_int, c_char_p, c_int, c_char_p)
@@ -53,13 +59,15 @@ class PPMDecoder(object):
             sample rate
         """
         self._rate = float(rate)
-        self._lf = None
+        self._last_fall = None
+        self._last_rise = None
         self._threshold = 15000
         self._last_edge = None
         self._ch = None
 
         # Size in sampling intervals, of the frame space marker
-        self._marker = int(2.0 * 0.0025 * self._rate)
+        # Note: 1.9 since probably should be 2, but sometimes it's not quite
+        self._marker = int(1.9 * 0.0025 * self._rate)
 
         # Mapping of channels to events
         self._mapping = {0: ecodes.ABS_X,
@@ -81,7 +89,7 @@ class PPMDecoder(object):
     def __exit__(self, type, value, tb):
         self._ev.close()
 
-    def feed(self, data):
+    def feed(self, data, plot=False, measure_high=True):
         """Feeds the decoder with a block of sample data.
 
         The data should be integer values, and should only be a single channel.
@@ -89,8 +97,19 @@ class PPMDecoder(object):
         Parameters
         ----------
         data : list
-            sample data
+            Sample data
+        plot : bool
+            Whether to display data in a matplotlib plot or not
+        measure_high : bool
+            Whether to compute the duration of each channel based on the time
+            it's high or low. Code originally was False case but on my controller
+            the high time seems to be what's modulated. I can't find docs on
+            PPM yet... just doing what works for me here...
         """
+        if plot:
+            rising = np.zeros((len(data),))
+            falling = np.zeros((len(data),))
+
         sync_req = False
         for i in range(len(data)):
             this_edge = data[i] > self._threshold
@@ -100,23 +119,51 @@ class PPMDecoder(object):
 
             if this_edge and not self._last_edge:
                 # rising
-                if self._lf is not None:
-                    sync_req |= self.signal(i - self._lf)
+                self._last_rise = i
+
+                if self._last_fall is not None:
+                    if not measure_high: 
+                        sync_req |= self.signal(i - self._last_fall)
+
+                    if plot:
+                        rising[i] = self._threshold
             elif not this_edge and self._last_edge:
                 # falling
-                self._lf = i
+                self._last_fall = i
+
+                if self._last_rise is not None:
+                    if measure_high:
+                        sync_req |= self.signal(i - self._last_rise)
+
+                    if plot:
+                        falling[i] = self._threshold
 
             self._last_edge = this_edge
 
         if sync_req:
             self._ev.syn()
 
-        if self._lf is not None:
-            self._lf = self._lf - len(data)
-            if self._lf < (-self._rate):
+        # Handle wrapping around data window
+        if self._last_fall is not None:
+            self._last_fall = self._last_fall - len(data)
+
+            if self._last_fall < (-self._rate):
                 print("Lost sync")
                 self._ch = None
-                self._lf = None
+                self._last_fall = None
+                self._last_rise = None
+
+        if self._last_rise is not None: 
+            self._last_rise = self._last_rise - len(data)
+
+        if plot:
+            y = list(data)
+            x = np.arange(0, len(y), 1)
+            plt.plot(x, y, label="signal")
+            plt.plot(x, rising, label="rising")
+            plt.plot(x, falling, label="falling")
+            plt.legend()
+            plt.show()
 
     def signal(self, w):
         """Process the detected signal.
@@ -165,7 +212,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', help="input audio device name", default='default')
     parser.add_argument('action', default='run', choices=['run', 'inputs'])
-
+    parser.add_argument('--plot', help="display plot of PPM data", dest='plot', action='store_true')
+    parser.set_defaults(plot=False)
     args = parser.parse_args()
 
     if args.action == 'inputs':
@@ -205,7 +253,7 @@ def main():
             while True:
                 sample = stream.read(chunk)
                 sample = array.array('h', sample)
-                ppm.feed(sample)
+                ppm.feed(sample, args.plot)
     finally:
         stream.close()
 
