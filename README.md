@@ -23,12 +23,19 @@ Usage
 You need user access to */dev/uinput*. To create a udev rule giving access to
 users in the "input" group, put in */etc/udev/rules.d/99-uinput.rules*
 
-    KERNEL=="uinput", GROUP:="input", MODE:="0666"
+    KERNEL=="uinput", GROUP:="input", MODE:="0660"
+
+Then make sure the uinput driver is loaded on boot, creating
+*/etc/modules-load.d/uinput.conf* (note: if you don't want to reboot, load
+with ``sudo modprobe uinput``).
+
+    uinput
 
 Then reload the udev rules with (and make sure you're in the "input" group, if
-not, add yourself and logout/login):
+not, add yourself and logout/login or reboot):
 
     sudo udevadm control --reload-rules && sudo udevadm trigger
+    sudo usermod -a -G input your_username
 
 To select which microphone input you wish to use, list them with:
 
