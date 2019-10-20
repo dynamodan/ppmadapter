@@ -93,6 +93,7 @@ class PPMDecoder(object):
             3: ecodes.ABS_THROTTLE,
             4: ecodes.ABS_RUDDER,
             5: ecodes.ABS_MISC,
+            6: ecodes.ABS_BRAKE, # Fake copy of channel 4 for FlightGear
         }
 
         # History of values (for averaging)
@@ -205,6 +206,14 @@ class PPMDecoder(object):
 
             if debug:
                 print("ch"+str(ch), "=", value)
+
+        # Fake copy channel 4 to channel 6 for FlightGear brakes
+        values = self.history[4]
+        if len(values) > 0:
+            value = int(sum(values)/len(values) * 512)
+        else:
+            value = 0
+        self.ev.write(ecodes.EV_ABS, self.mapping[6], value)
 
         self.ev.syn()
 
