@@ -100,7 +100,7 @@ class PPMDecoder(object):
                 for i in self.mapping.keys()}
 
         # Min/max values we'll output
-        events = [(v, (0, -512, 512, 0)) for v in self.mapping.values()]
+        events = [(v, (0, -512, 512, 0, 0)) for v in self.mapping.values()]
 
         self.ev = UInput(name='ppmadapter', events={
             ecodes.EV_ABS: events,
