@@ -3,9 +3,14 @@ PPM Adapter
 This is a userspace application that reads the PPM audio stream produced by
 many RC controllers, and produces a virtual joystick using the uinput system.
 
-This was forked from [amckee/ppmadapter](https://github.com/amckee/ppmadapter)
+This was forked from [floft/ppmadapter](https://github.com/floft/ppmadapter)
+because it seemed more up to date, but I had to fix an issue with not enough arguments
+in each key being sent in the events key `ecodes.EV_ABS`.  (See my commit d997209).
+After that it worked.  I'm not really a python programmer so this was tricky to figure out.
+
+And this was forked from [amckee/ppmadapter](https://github.com/amckee/ppmadapter)
 that provided a Python 3 compatible version of PPM Adapter. However, it seemed
-not to work with my controller, so I modified it to use the PPM to TX logic
+not to work with his controller, so he had modified it to use the PPM to TX logic
 (but still being userspace not requiring a user-compiled kernel module) at
 [nexx512/txppm/ppm.c](https://github.com/nexx512/txppm/blob/master/software/ppm.c).
 
